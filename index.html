@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ROADRUSHER</title>
+  <style>
+    :root {
+      --bg: #070d18;
+      --road: #1e2531;
+      --grass: #0b5c43;
+      --grass2: #0a4b37;
+      --line: rgba(255,255,255,0.18);
+      --panel: rgba(15,22,36,0.92);
+      --text: #edf7ff;
+      --blue: #35d5ff;
+      --blue2: #0ea5d8;
+      --red: #ff5c6a;
+      --red2: #d63145;
+      --gold: #ffd166;
+      --green: #52e0a4;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: radial-gradient(circle at top, #14233d 0%, #070d18 58%);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+    }
+
+    #game {
+      position: relative;
+      width: 420px;
+      height: 720px;
+      border-radius: 22px;
+      overflow: hidden;
+      border: 2px solid rgba(255,255,255,0.12);
+      background: #090e1a;
+      box-shadow: 0 28px 60px rgba(0,0,0,0.5);
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(#1b2439, #0b0f17);
+    }
+
+    .hud {
+      position: absolute;
+      top: 12px;
+      left: 0;
+      right: 0;
+      display: flex;
+      justify-content: space-between;
+      padding: 0 14px;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    .stat {
+      min-width: 98px;
+      background: rgba(10, 16, 27, 0.7);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      text-align: center;
+      padding: 8px 10px;
+      backdrop-filter: blur(8px);
+    }
+
+    .label {
+      display: block;
+      font-size: 10px;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+      opacity: 0.72;
+    }
+
+    .value {
+      display: block;
+      margin-top: 3px;
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(4, 8, 16, 0.64);
+      z-index: 20;
+    }
+
+    .overlay.hidden {
+      display: none;
+    }
+
+    .panel {
+      width: 300px;
+      background: rgba(15, 22, 38, 0.96);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 18px;
+      padding: 24px 20px;
+      text-align: center;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+    }
+
+    .panel h1 {
+      margin: 0 0 12px;
+      font-size: 30px;
+      letter-spacing: 0.5px;
+    }
+
+    .panel p {
+      margin: 8px 0;
+      font-size: 15px;
+      color: rgba(237,247,255,0.85);
+    }
+
+    button {
+      margin-top: 16px;
+      border: none;
+      border-radius: 12px;
+      padding: 12px 22px;
+      font-size: 18px;
+      font-weight: 700;
+      color: white;
+      background: linear-gradient(135deg, #2ed4ff, #2d6bff);
+      cursor: pointer;
+      box-shadow: 0 12px 24px rgba(45,107,255,0.35);
+    }
+  </style>
+</head>
+<body>
+  <div id="game">
+    <div class="hud">
+      <div class="stat">
+        <span class="label">Score</span>
+        <span id="score" class="value">0</span>
+      </div>
+      <div class="stat">
+        <span class="label">Best</span>
+        <span id="best" class="value">0</span>
+      </div>
+      <div class="stat">
+        <span class="label">Speed</span>
+        <span id="speed" class="value">0</span>
+      </div>
+    </div>
+
+    <canvas id="canvas" width="420" height="720"></canvas>
+
+    <div id="overlay" class="overlay">
+      <div class="panel">
+        <h1 id="title">Arcade Racer</h1>
+        <p id="message">A/D or ←/→ to steer</p>
+        <p>Shift to drift • Space to boost</p>
+        <button id="startBtn">Start Race</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
+    const scoreEl = document.getElementById("score");
+    const bestEl = document.getElementById("best");
+    const speedEl = document.getElementById("speed");
+    const overlay = document.getElementById("overlay");
+    const titleEl = document.getElementById("title");
+    const messageEl = document.getElementById("message");
+    const startBtn = document.getElementById("startBtn");
+
+    const road = {
+      left: canvas.width / 2 - 110,
+      width: 220,
+      laneCount: 3,
+      scroll: 0,
+      speed: 5
+    };
+
+    const player = {
+      x: canvas.width / 2,
+      y: canvas.height - 120,
+      w: 38,
+      h: 64,
+      velX: 0,
+      boost: 100,
+      driftMeter: 0,
+      driftBonus: 0,
+      trail: []
+    };
+
+    const keys = {
+      left: false,
+      right: false,
+      boost: false,
+      drift: false
+    };
+
+    const traffic = [];
+    const pickups = [];
+    const particles = [];
+
+    let running = false;
+    let score = 0;
+    let best = Number(localStorage.getItem("arcade_racer_best")) || 0;
+    let lastTime = 0;
+    let spawnTrafficTimer = 0;
+    let spawnPickupTimer = 0;
+
+    function clamp(v, min, max) {
+      return Math.min(max, Math.max(min, v));
+    }
+
+    function lerp(a, b, t) {
+      return a + (b - a) * t;
+    }
+
+    function updateHud() {
+      scoreEl.textContent = Math.floor(score);
+      bestEl.textContent = Math.floor(best);
+      speedEl.textContent = Math.floor(road.speed * 12) + " km/h";
+    }
+
+    function startGame() {
+      running = true;
+      score = 0;
+      road.speed = 5;
+      road.scroll = 0;
+      spawnTrafficTimer = 0;
+      spawnPickupTimer = 0;
+      traffic.length = 0;
+      pickups.length = 0;
+      particles.length = 0;
+
+      player.x = canvas.width / 2;
+      player.velX = 0;
+      player.boost = 100;
+      player.driftMeter = 0;
+      player.driftBonus = 0;
+      player.trail = [];
+
+      overlay.classList.add("hidden");
+      updateHud();
+    }
+
+    function endGame() {
+      running = false;
+
+      if (score > best) {
+        best = score;
+        localStorage.setItem("arcade_racer_best", String(best));
+      }
+
+      overlay.classList.remove("hidden");
+      titleEl.textContent = "You Crashed!";
+      messageEl.textContent = "Final score: " + Math.floor(score);
+      startBtn.textContent = "Race Again";
+
+      updateHud();
+    }
+
+    function spawnTraffic() {
+      const laneWidth = road.width / road.laneCount;
+      const lane = Math.floor(Math.random() * road.laneCount);
+      const x = road.left + lane * laneWidth + laneWidth / 2;
+
+      traffic.push({
+        x,
+        y: -90,
+        w: 34,
+        h: 62,
+        color: Math.random() > 0.5 ? "#ff5c6a" : "#ff9e2f",
+        accent: Math.random() > 0.5 ? "#d63145" : "#ffbc42",
+        speed: 2 + Math.random() * 3.5 + road.speed * 0.18
+      });
+    }
+
+    function spawnPickup() {
+      const laneWidth = road.width / road.laneCount;
+      const lane = Math.floor(Math.random() * road.laneCount);
+      const x = road.left + lane * laneWidth + laneWidth / 2;
+
+      pickups.push({
+        x,
+        y: -40,
+        r: 11,
+        type: "boost",
+        pulse: Math.random() * Math.PI * 2
+      });
+    }
+
+    function addParticles(x, y, color, count = 18) {
+      for (let i = 0; i < count; i++) {
+        particles.push({
+          x,
+          y,
+          vx: (Math.random() - 0.5) * 4,
+          vy: (Math.random() - 0.5) * 4,
+          life: 18 + Math.random() * 18,
+          maxLife: 18 + Math.random() * 18,
+          color
+        });
+      }
+    }
+
+    function rectsIntersect(a, b) {
+      return (
+        a.x < b.x + b.w &&
+        a.x + a.w > b.x &&
+        a.y < b.y + b.h &&
+        a.y + a.h > b.y
+      );
+    }
+
+    function circleRectIntersect(circle, rect) {
+      const closestX = clamp(circle.x, rect.x, rect.x + rect.w);
+      const closestY = clamp(circle.y, rect.y, rect.y + rect.h);
+      const dx = circle.x - closestX;
+      const dy = circle.y - closestY;
+      return (dx * dx + dy * dy) <= circle.r * circle.r;
+    }
+
+    function update(dt) {
+      if (!running) return;
+
+      road.speed = lerp(road.speed, 22 + score * 0.015, 0.02);
+      road.scroll += road.speed * 0.9;
+
+      score += dt * 0.015 + road.speed * 0.005;
+
+      const turnForce = keys.left ? -1 : keys.right ? 1 : 0;
+      const accel = 0.35;
+
+      if (turnForce !== 0) {
+        player.velX += turnForce * accel;
+      } else {
+        player.velX *= 0.82;
+      }
+
+      player.velX = clamp(player.velX, -6.2, 6.2);
+      player.x += player.velX;
+
+      const roadMin = road.left + 10;
+      const roadMax = road.left + road.width - 10;
+      player.x = clamp(player.x, roadMin, roadMax);
+
+      const drifting = keys.drift && Math.abs(player.velX) > 2.2 && (keys.left || keys.right);
+      if (drifting) {
+        player.driftMeter += 1.2;
+        player.driftBonus += Math.abs(player.velX) * 0.12;
+      } else {
+        player.driftMeter *= 0.96;
+      }
+
+      const boostActive = keys.boost && player.boost > 0;
+      if (boostActive) {
+        player.boost -= 1.8;
+        road.speed += 0.4;
+      } else {
+        player.boost += 0.22;
+      }
+
+      player.boost = clamp(player.boost, 0, 100);
+
+      if (player.driftBonus > 0) {
+        score += player.driftBonus * 0.02;
+        player.driftBonus *= 0.94;
+      }
+
+      if (boostActive) {
+        addParticles(player.x, player.y + 20, "#ffd166", 2);
+      }
+
+      player.trail.push({ x: player.x, y: player.y + 18, life: 14 });
+      if (player.trail.length > 12) player.trail.shift();
+
+      for (let i = player.trail.length - 1; i >= 0; i--) {
+        player.trail[i].life -= 1;
+        if (player.trail[i].life <= 0) player.trail.splice(i, 1);
+      }
+
+      spawnTrafficTimer -= dt;
+      if (spawnTrafficTimer <= 0) {
+        spawnTraffic();
+        spawnTrafficTimer = clamp(900 - road.speed * 8, 380, 900);
+      }
+
+      spawnPickupTimer -= dt;
+      if (spawnPickupTimer <= 0) {
+        spawnPickup();
+        spawnPickupTimer = 3300 + Math.random() * 1800;
+      }
+
+      for (let i = traffic.length - 1; i >= 0; i--) {
+        const car = traffic[i];
+        car.y += (road.speed * 0.9) + car.speed;
+
+        if (car.y > canvas.height + 100) {
+          traffic.splice(i, 1);
+          continue;
+        }
+
+        const playerBox = {
+          x: player.x - player.w / 2,
+          y: player.y - player.h / 2,
+          w: player.w,
+          h: player.h
+        };
+
+        const carBox = {
+          x: car.x - car.w / 2,
+          y: car.y - car.h / 2,
+          w: car.w,
+          h: car.h
+        };
+
+        if (rectsIntersect(playerBox, carBox)) {
+          addParticles(player.x, player.y, "#ff6b6b", 36);
+          endGame();
+          return;
+        }
+      }
+
+      for (let i = pickups.length - 1; i >= 0; i--) {
+        const p = pickups[i];
+        p.y += road.speed * 1.2;
+        p.pulse += 0.12;
+
+        const rect = {
+          x: player.x - player.w / 2,
+          y: player.y - player.h / 2,
+          w: player.w,
+          h: player.h
+        };
+
+        if (circleRectIntersect(p, rect)) {
+          pickups.splice(i, 1);
+          player.boost = clamp(player.boost + 35, 0, 100);
+          score += 150;
+          addParticles(player.x, player.y, "#52e0a4", 20);
+          continue;
+        }
+
+        if (p.y > canvas.height + 30) {
+          pickups.splice(i, 1);
+        }
+      }
+
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life -= 1;
+        if (p.life <= 0) particles.splice(i, 1);
+      }
+
+      if (score > best) {
+        best = score;
+        localStorage.setItem("arcade_racer_best", String(best));
+      }
+
+      updateHud();
+    }
+
+    function drawRoad() {
+      ctx.fillStyle = "#07111e";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = "#0c5b3f";
+      ctx.fillRect(0, 0, road.left, canvas.height);
+      ctx.fillRect(road.left + road.width, 0, canvas.width - (road.left + road.width), canvas.height);
+
+      ctx.fillStyle = "#1d2431";
+      ctx.fillRect(road.left, 0, road.width, canvas.height);
+
+      const stripeHeight = 42;
+      const gap = 24;
+      const offset = (road.scroll * 1.2) % (stripeHeight + gap);
+
+      ctx.fillStyle = "rgba(255,255,255,0.2)";
+      for (let i = -1; i < 20; i++) {
+        const y = i * (stripeHeight + gap) - offset;
+        ctx.fillRect(road.left + road.width / 3, y, 6, stripeHeight);
+        ctx.fillRect(road.left + (road.width * 2) / 3, y, 6, stripeHeight);
+      }
+
+      ctx.fillStyle = "#edf7ff";
+      ctx.fillRect(road.left, 0, 4, canvas.height);
+      ctx.fillRect(road.left + road.width - 4, 0, 4, canvas.height);
+    }
+
+    function drawCar(x, y, w, h, color, accent) {
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y, w, h);
+
+      ctx.fillStyle = "rgba(255,255,255,0.58)";
+      ctx.fillRect(x + 7, y + 8, w - 14, h * 0.25);
+
+      ctx.fillStyle = accent;
+      ctx.fillRect(x + 6, y + 14, w - 12, 12);
+
+      ctx.fillStyle = "#111827";
+      ctx.fillRect(x + 5, y + 4, 7, 14);
+      ctx.fillRect(x + w - 12, y + 4, 7, 14);
+      ctx.fillRect(x + 5, y + h - 18, 7, 14);
+      ctx.fillRect(x + w - 12, y + h - 18, 7, 14);
+    }
+
+    function drawPickup(pickup) {
+      const size = pickup.r + Math.sin(pickup.pulse) * 2;
+      ctx.save();
+      ctx.translate(pickup.x, pickup.y);
+
+      ctx.fillStyle = "#52e0a4";
+      ctx.beginPath();
+      ctx.moveTo(0, -size);
+      ctx.lineTo(size, 0);
+      ctx.lineTo(0, size);
+      ctx.lineTo(-size, 0);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = "rgba(255,255,255,0.75)";
+      ctx.fillRect(-3, -8, 6, 16);
+      ctx.fillRect(-8, -3, 16, 6);
+
+      ctx.restore();
+    }
+
+    function drawParticles() {
+      for (const p of particles) {
+        ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x, p.y, 3, 3);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function drawBoostMeter() {
+      const x = 18;
+      const y = canvas.height - 26;
+      const w = 120;
+      const h = 10;
+
+      ctx.fillStyle = "rgba(255,255,255,0.12)";
+      ctx.fillRect(x, y, w, h);
+
+      ctx.fillStyle = "#ffd166";
+      ctx.fillRect(x, y, (player.boost / 100) * w, h);
+
+      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.strokeRect(x, y, w, h);
+
+      ctx.fillStyle = "#edf7ff";
+      ctx.font = "12px Arial";
+      ctx.fillText("BOOST", x, y - 8);
+    }
+
+    function drawTrail() {
+      for (let i = 0; i < player.trail.length; i++) {
+        const t = player.trail[i];
+        ctx.fillStyle = "rgba(53, 213, 255, " + (t.life / 14) * 0.7 + ")";
+        ctx.fillRect(t.x - 5, t.y, 10, 14);
+      }
+    }
+
+    function draw() {
+      drawRoad();
+
+      for (const p of pickups) {
+        drawPickup(p);
+      }
+
+      for (const car of traffic) {
+        drawCar(car.x - car.w / 2, car.y - car.h / 2, car.w, car.h, car.color, car.accent);
+      }
+
+      drawTrail();
+      drawCar(player.x - player.w / 2, player.y - player.h / 2, player.w, player.h, "#35d5ff", "#0ea5d8");
+      drawParticles();
+      drawBoostMeter();
+    }
+
+    function loop(timestamp) {
+      if (!lastTime) lastTime = timestamp;
+      const dt = timestamp - lastTime;
+      lastTime = timestamp;
+
+      update(dt);
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    document.addEventListener("keydown", (e) => {
+      const k = e.key.toLowerCase();
+
+      if (k === "arrowleft" || k === "a") keys.left = true;
+      if (k === "arrowright" || k === "d") keys.right = true;
+      if (k === " " || k === "w") {
+        e.preventDefault();
+        keys.boost = true;
+      }
+      if (k === "shift") keys.drift = true;
+    });
+
+    document.addEventListener("keyup", (e) => {
+      const k = e.key.toLowerCase();
+
+      if (k === "arrowleft" || k === "a") keys.left = false;
+      if (k === "arrowright" || k === "d") keys.right = false;
+      if (k === " " || k === "w") keys.boost = false;
+      if (k === "shift") keys.drift = false;
+    });
+
+    startBtn.addEventListener("click", startGame);
+
+    updateHud();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
